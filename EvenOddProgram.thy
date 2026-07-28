@@ -129,6 +129,7 @@ lemma verify_even_odd:
 
   subgoal (* even function *)
     apply (vcg_verify_function blocks: even_entry_def even_if_def even_else_def even_return_def prog: even_odd_prog_def annot: even_odd_annots_def func: even_func_def odd_func_def)
+    apply (all \<open>((intro conjI)?; ((simp; fail)?))\<close>)
     apply (auto split: if_splits simp: even_odd_prog_def)
     apply (smt (verit, del_insts) add.inverse_neutral add_diff_cancel_right' diff_minus_eq_add fun_upd_same signed.nle_le signed_arith_eq_checks_to_ord(1) signed_minus_1
           word_sle_eq)
@@ -137,9 +138,7 @@ lemma verify_even_odd:
     apply (vcg_verify_function blocks: odd_entry_def prog: even_odd_prog_def annot: even_odd_annots_def func: even_func_def odd_func_def)
     unfolding even_odd_prog_def
     by (auto split: if_splits)
-
   done
-
 
 (*
 define dso_local noundef zeroext i1 @odd(int)(i32 noundef lid n) {

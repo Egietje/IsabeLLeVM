@@ -226,13 +226,12 @@ lemma mult_floyd:
   apply (vcg_verify_program prog: mult_program_def)
   apply (vcg_verify_function blocks: mult_entry_def mult_cond_def mult_body_def mult_inc_def mult_end_def annot: mult_annotations_def prog: mult_program_def func: mult_function_def)
 
-  apply (auto split: if_splits)
-  unfolding mult_program_def
-     apply force
-    defer
-    apply force
-   apply force
-  subgoal for a aa ab ac b ad ae af ag ba ah bb aaaa baaa ia i resa ai aj ak al bc
+             apply (all \<open>((simp add: mult_program_def, force); fail)?\<close>)
+  apply (auto split: if_splits simp: distrib_left)
+  subgoal 
+    apply (rule exI[where x="0"])
+    by (auto simp: distrib_left)
+  subgoal for _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ i
     apply (rule exI[where x="i + 1"])
     by (auto simp: distrib_left)
   done

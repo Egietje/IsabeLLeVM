@@ -37,8 +37,9 @@ fun restore_state :: "state \<Rightarrow> state \<Rightarrow> llvm_value option 
 | "restore_state _ _ _ _ = err no_return_value"
 
 lemma wp_assign_params_intro:
-  assumes "register_\<alpha> s v = Some va" "is_lid n"
+  assumes "register_\<alpha> s v = Some va" 
   assumes "\<And>s''. register_\<alpha> s'' = (register_\<alpha> s')(reg n := Some va) \<Longrightarrow> memory_\<alpha> s'' = memory_\<alpha> s' \<Longrightarrow> wp (assign_params ps vs s s'') Q"
+  assumes "is_lid n"
   shows "wp (assign_params ((n,t)#ps) ((t',v)#vs) s s') Q"
   apply simp apply (intro wp_intro) using assms by auto
 
@@ -50,7 +51,7 @@ lemma wp_assign_params_empty_intro:
 lemma wp_restore_state_intro:
   assumes "\<And>n. rn = Some n \<Longrightarrow> rv = Some v"
   assumes "\<And>n. rn = Some n \<Longrightarrow> wp (set_register n v (pop_frame s s')) Q"
-  assumes "rn = None   \<Longrightarrow> wp (ok (pop_frame s s')) Q"
+  assumes "rn = None   \<Longrightarrow> Q (pop_frame s s')"
   shows "wp (restore_state s s' rv rn) Q"
   using assms
   unfolding wp_def
@@ -747,7 +748,7 @@ lemma unfolded_wp_vc:
   assumes "step_f_replaced_calls\<^sup>*\<^sup>* (branchf s None l f) s'"
   assumes "s' \<nexists>\<rightarrow>\<^sub>f"
   shows "wp_steps_f_post (branchf s None l f) s' fpost"
-  by (smt (verit, best) Steps.wp_func_replaced_calls_def assms(1,2,3,4,5,6,7) call_verification_condition_def)
+  by (smt (verit, best) wp_func_replaced_calls_def assms call_verification_condition_def)
 
 
 lemma call_vc_impl_global_vc:
