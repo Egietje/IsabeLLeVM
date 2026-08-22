@@ -78,8 +78,7 @@ definition mult_body :: "llvm_instruction_block" where
     br_label (lid ''for.inc'')
   )"
 
-abbreviation mult_body_pre :: "state \<Rightarrow> state \<Rightarrow> bool" where
-  "mult_body_pre \<equiv> (\<lambda>s s'. \<exists>aa a ba b ia i resa.
+abbreviation "stack_layout s s' aa ia ba resa a b i res \<equiv>
     register_contains_value ((lid ''a.addr'')) (addr aa) s'
   \<and> register_contains_value ((lid ''i''))      (addr ia) s'
   \<and> register_contains_value ((lid ''b.addr'')) (addr ba) s'
@@ -94,9 +93,14 @@ abbreviation mult_body_pre :: "state \<Rightarrow> state \<Rightarrow> bool" whe
       aa   := Some (mem_val (vi32 a)),
       ba   := Some (mem_val (vi32 b)),
       ia   := Some (mem_val (vi32 i)),
-      resa := Some (mem_val (vi32 (a*i)))
+      resa := Some (mem_val (vi32 res))
     )
-  \<and> unique_addresses [aa, ba, ia, resa]
+
+  \<and> unique_addresses [aa, ba, ia, resa]"
+
+abbreviation mult_body_pre :: "state \<Rightarrow> state \<Rightarrow> bool" where
+  "mult_body_pre \<equiv> (\<lambda>s s'. \<exists>aa a ba b ia i resa.
+    stack_layout s s' aa ia ba resa a b i (a*i)
   \<and> 0 \<le>s i
   \<and> i <s b
   )"
@@ -143,36 +147,13 @@ definition mult_end :: "llvm_instruction_block" where
 
 abbreviation mult_end_pre :: "state \<Rightarrow> state \<Rightarrow> bool" where
   "mult_end_pre \<equiv> (\<lambda>s s'. \<exists>aa a ba b ia i resa.
-    register_contains_value ((lid ''a.addr'')) (addr aa) s'
-  \<and> register_contains_value ((lid ''i''))      (addr ia) s'
-  \<and> register_contains_value ((lid ''b.addr'')) (addr ba) s'
-  \<and> register_contains_value ((lid ''result'')) (addr resa) s'
-
-  \<and> register_contains_value ((lid ''a'')) (vi32 a) s
-  \<and> register_contains_value ((lid ''b'')) (vi32 b) s
-  \<and> register_contains_value ((lid ''a'')) (vi32 a) s'
-  \<and> register_contains_value ((lid ''b'')) (vi32 b) s'
-
-  \<and> memory_\<alpha> s' = (memory_\<alpha> s)(
-      aa   := Some (mem_val (vi32 a)),
-      ba   := Some (mem_val (vi32 b)),
-      ia   := Some (mem_val (vi32 i)),
-      resa := Some (mem_val (vi32 (a*i)))
-    )
-  \<and> unique_addresses [aa, ba, ia, resa]
+    stack_layout s s' aa ba ia resa a b i (a*i)
   \<and> i = b
   )"
 
 abbreviation mult_post :: "postcondition" where
   "mult_post \<equiv> (\<lambda>s s' v. \<exists>a b i aa ba ia resa.
-    register_contains_value (lid ''a'') (vi32 a) s
-  \<and> register_contains_value (lid ''b'') (vi32 b) s
-  \<and> memory_\<alpha> s' = (memory_\<alpha> s)(
-      aa   := Some (mem_val (vi32 a)),
-      ba   := Some (mem_val (vi32 b)),
-      ia   := Some (mem_val (vi32 i)),
-      resa := Some (mem_val (vi32 (a*i)))
-    )
+    stack_layout s s' aa ia ba resa a b i (a*i)
   \<and> v = Some (vi32 (a * b))
   )"
 
@@ -222,18 +203,21 @@ lemma mult_floyd:
   "verify_program
     mult_program
     mult_annotations"
-  including word_bundle
   apply (vcg_verify_program prog: mult_program_def)
   apply (vcg_verify_function blocks: mult_entry_def mult_cond_def mult_body_def mult_inc_def mult_end_def annot: mult_annotations_def prog: mult_program_def func: mult_function_def)
 
-             apply (all \<open>((simp add: mult_program_def, force); fail)?\<close>)
+  apply (all \<open>((simp add: mult_program_def, force); fail)?\<close>)
+  including word_bundle
   apply (auto split: if_splits simp: distrib_left)
-  subgoal 
+  
+  subgoal
     apply (rule exI[where x="0"])
     by (auto simp: distrib_left)
+  
   subgoal for _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ i
     apply (rule exI[where x="i + 1"])
     by (auto simp: distrib_left)
+  
   done
 
 

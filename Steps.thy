@@ -355,9 +355,9 @@ lemma step_deterministic[simp]:
 
 section "Weakest Precondition over Steps"
 
-definition "wp_steps_i s Q \<equiv> \<forall>s'. terminates_to_i s s' \<longrightarrow> \<not>is_erri s' \<and> Q s'"
+definition "wp_og_is s Q \<equiv> \<forall>s'. terminates_to_i s s' \<longrightarrow> \<not>is_erri s' \<and> Q s'"
 definition "wp_steps_f_post s s' Q \<equiv> (\<not>is_errf s') \<and> (Q (state s) (state s') (ret_value s'))"
-definition "wp_steps_f s Q \<equiv> \<forall>s'. terminates_to_f s s' \<longrightarrow> wp_steps_f_post s s' Q"
+definition "wp_og_fs s Q \<equiv> \<forall>s'. terminates_to_f s s' \<longrightarrow> wp_steps_f_post s s' Q"
 
 
 
@@ -379,7 +379,7 @@ definition "global_verification_condition \<equiv>
     map_of annotations f = Some (fpre, bpres, fpost) \<and>
     first_label fu = Some l \<and> 
     fpre s
-    \<longrightarrow> wp_steps_f (branchf s None l f) fpost)
+    \<longrightarrow> wp_og_fs (branchf s None l f) fpost)
   \<and> (\<forall>f. map_of program f \<noteq> None \<longrightarrow> map_of annotations f \<noteq> None))"
 
 
@@ -495,7 +495,7 @@ lemma obtain_n_rcf_steps:
   using n_rcf_steps.simps by blast+
 
 
-definition "wp_func_replaced_calls s Q \<equiv> \<forall>s'. (step_f_replaced_calls\<^sup>*\<^sup>* s s' \<and> (s' \<nexists>\<rightarrow>\<^sub>f)) \<longrightarrow> wp_steps_f_post s s' Q"
+definition "wp_fs s Q \<equiv> \<forall>s'. (step_f_replaced_calls\<^sup>*\<^sup>* s s' \<and> (s' \<nexists>\<rightarrow>\<^sub>f)) \<longrightarrow> wp_steps_f_post s s' Q"
 
 definition "call_verification_condition \<equiv>
   ((\<forall>f fu fpre bpres fpost l s.
@@ -503,7 +503,7 @@ definition "call_verification_condition \<equiv>
     map_of annotations f = Some (fpre, bpres, fpost) \<and>
     first_label fu = Some l \<and> 
     fpre s
-    \<longrightarrow> wp_func_replaced_calls (branchf s None l f) fpost)
+    \<longrightarrow> wp_fs (branchf s None l f) fpost)
   \<and> (\<forall>f. map_of program f \<noteq> None \<longrightarrow> map_of annotations f \<noteq> None))"
 
 
@@ -565,14 +565,14 @@ next
       proof (cases "fpre s'")
         case True
        \<comment> \<open> the precondition holds, which means the pre/post pair holds (per the verification condition) \<close>
-       then have "wp_func_replaced_calls (branchf s' None b f) fpost"
+       then have "wp_fs (branchf s' None b f) fpost"
           using assms 7 annots
           unfolding call_verification_condition_def
           by blast
 
        \<comment> \<open> extract the postcondition \<close>
        hence "wp_steps_f_post (branchf s' None b f) (retf s'' v' f) fpost"
-          unfolding wp_func_replaced_calls_def 
+          unfolding wp_fs_def 
           using IH_f terminal_f_def by simp
        hence post_holds: "fpost s' s'' v'"
           unfolding wp_steps_f_post_def by simp
@@ -625,13 +625,13 @@ next
       then have "\<not> fpre s'"
       proof -
         \<comment> \<open> if we did have the precond, then the weakest precondition over steps would hold by our vc  \<close>
-        have "fpre s' \<Longrightarrow> wp_func_replaced_calls (branchf s' None b f) fpost"
+        have "fpre s' \<Longrightarrow> wp_fs (branchf s' None b f) fpost"
           using assms 11 annots
           unfolding call_verification_condition_def
           by blast
         \<comment> \<open> which means it holds for an error \<close>
         hence "fpre s' \<Longrightarrow> wp_steps_f_post (branchf s' None b f) errf fpost"
-          unfolding wp_func_replaced_calls_def 
+          unfolding wp_fs_def 
           using IH_f terminal_f_def
           by simp
         \<comment> \<open> however, that is a contradiction since wp specifies it does not reach errors \<close>
@@ -673,14 +673,14 @@ next
       proof (cases "fpre s'")
         case True
        \<comment> \<open> the precondition holds, which means the pre/post pair holds (per the verification condition) \<close>
-       then have "wp_func_replaced_calls (branchf s' None b f) fpost"
+       then have "wp_fs (branchf s' None b f) fpost"
           using assms 12 annots
           unfolding call_verification_condition_def
           by blast
 
        \<comment> \<open> extract the postcondition \<close>
        hence "wp_steps_f_post (branchf s' None b f) (retf s'' v' f) fpost"
-          unfolding wp_func_replaced_calls_def 
+          unfolding wp_fs_def 
           using IH_f terminal_f_def by simp
        hence post_holds: "fpost s' s'' v'"
           unfolding wp_steps_f_post_def by simp
@@ -748,12 +748,12 @@ lemma unfolded_wp_vc:
   assumes "step_f_replaced_calls\<^sup>*\<^sup>* (branchf s None l f) s'"
   assumes "s' \<nexists>\<rightarrow>\<^sub>f"
   shows "wp_steps_f_post (branchf s None l f) s' fpost"
-  by (smt (verit, best) wp_func_replaced_calls_def assms call_verification_condition_def)
+  by (smt (verit, best) wp_fs_def assms call_verification_condition_def)
 
 
 lemma call_vc_impl_global_vc:
   "call_verification_condition \<Longrightarrow> global_verification_condition"
-  unfolding global_verification_condition_def wp_steps_f_def
+  unfolding global_verification_condition_def wp_og_fs_def
   apply (intro allI conjI impI)
    apply (smt (verit, ccfv_threshold) mono_rtranclp step_impl_step_replaced(2) unfolded_wp_vc)
   unfolding call_verification_condition_def
@@ -819,31 +819,31 @@ definition annotated_step :: "function_state \<Rightarrow> function_state \<Righ
 abbreviation annotated_steps :: "function_state \<Rightarrow> function_state \<Rightarrow> bool" (infix "\<Rightarrow>*" 50) where
   "fs \<Rightarrow>* fs' \<equiv> annotated_step\<^sup>*\<^sup>* fs fs'"
 
-definition wp_step where
-  "wp_step fs Q \<equiv> (\<forall>fs'. step_f_replaced_calls fs fs' \<longrightarrow> \<not>is_errf fs' \<and> Q fs')"
+definition wp_f where
+  "wp_f fs Q \<equiv> (\<forall>fs'. step_f_replaced_calls fs fs' \<longrightarrow> \<not>is_errf fs' \<and> Q fs')"
 
-definition wp_rc_steps_i where
-  "wp_rc_steps_i s Q \<equiv> (\<forall>s'. (step_i_replaced_calls\<^sup>*\<^sup>* s s' \<and> s' \<nexists>\<rightarrow>\<^sub>i) \<longrightarrow> (\<not>is_erri s' \<and> Q s'))"
-definition wp_rc_step_i where
-  "wp_rc_step_i s Q \<equiv> (\<forall>s'. (step_i_replaced_calls s s') \<longrightarrow> (\<not>is_erri s' \<and> Q s'))"
+definition wp_is where
+  "wp_is s Q \<equiv> (\<forall>s'. (step_i_replaced_calls\<^sup>*\<^sup>* s s' \<and> s' \<nexists>\<rightarrow>\<^sub>i) \<longrightarrow> (\<not>is_erri s' \<and> Q s'))"
+definition wp_i where
+  "wp_i s Q \<equiv> (\<forall>s'. (step_i_replaced_calls s s') \<longrightarrow> (\<not>is_erri s' \<and> Q s'))"
 
 lemma wp_rc_steps_i_intro:
   assumes "s \<nexists>\<rightarrow>\<^sub>i \<Longrightarrow> \<not>is_erri s \<and> Q s"
-  assumes "\<not>s \<nexists>\<rightarrow>\<^sub>i \<Longrightarrow> wp_rc_step_i s (\<lambda>s'. wp_rc_steps_i s' Q)"
-  shows "wp_rc_steps_i s Q"
-  unfolding wp_rc_steps_i_def
+  assumes "\<not>s \<nexists>\<rightarrow>\<^sub>i \<Longrightarrow> wp_i s (\<lambda>s'. wp_is s' Q)"
+  shows "wp_is s Q"
+  unfolding wp_is_def
   apply (intro allI impI, elim conjE)
   subgoal for s'
     using assms apply (rotate_tac 0)
     apply (induction rule: converse_rtranclp_induct) apply blast
-    unfolding wp_rc_step_i_def
-    by (smt (verit) Steps.step_i_replaced_calls.simps terminal_state_simps(3) wp_rc_steps_i_def)
+    unfolding wp_i_def
+    by (smt (verit) Steps.step_i_replaced_calls.simps terminal_state_simps(3) wp_is_def)
   done
 
 lemma wp_step_intro:
   assumes "map_of program f = Some fu"
   assumes "map_of (llvm_function.blocks fu) lab = Some b"
-  assumes "wp_rc_steps_i
+  assumes "wp_is
             (execi prev b s)
             (\<lambda>si'.
               (case si' of
@@ -855,12 +855,12 @@ lemma wp_step_intro:
               | _ \<Rightarrow> False
               )
             )"
-  shows "wp_step (branchf s prev lab f) Q"
-  unfolding wp_step_def
+  shows "wp_f (branchf s prev lab f) Q"
+  unfolding wp_f_def
   apply (intro allI impI)
   apply (cases rule: step_f_replaced_calls.cases)
   using assms
-  unfolding wp_rc_steps_i_def
+  unfolding wp_is_def
   by auto
 
 
@@ -868,9 +868,9 @@ lemma wp_step_intro:
 named_theorems wp_step_i_intros
 lemma wp_step_i_br_label_intro[wp_step_i_intros]:
   assumes "Q (flowi s (branch_label l))"
-  shows "wp_rc_step_i (execi pre ([],[],br_label l) s) Q"
+  shows "wp_i (execi pre ([],[],br_label l) s) Q"
   using assms
-  unfolding wp_rc_step_i_def
+  unfolding wp_i_def
   apply (intro allI impI)
   using step_i_replaced_calls.simps
   by simp
@@ -878,38 +878,38 @@ lemma wp_step_i_br_i1_intro[wp_step_i_intros]:
   assumes "register_\<alpha> s b = Some (vi1 bool)"
   assumes "bool \<Longrightarrow> Q (flowi s (branch_label l1))"
   assumes "\<not>bool \<Longrightarrow> Q (flowi s (branch_label l2))"
-  shows "wp_rc_step_i (execi pre ([],[],br_i1 b l1 l2) s) Q"
+  shows "wp_i (execi pre ([],[],br_i1 b l1 l2) s) Q"
   using assms
-  unfolding wp_rc_step_i_def
+  unfolding wp_i_def
   apply (intro allI impI)
   using step_i_replaced_calls.simps register_\<alpha>_eq_get_register
   by (cases bool; fastforce) \<comment> \<open> Takes a bit... \<close>
 lemma wp_step_i_ret_None_intro[wp_step_i_intros]:
   assumes "Q (flowi s (return_value None))"
-  shows "wp_rc_step_i (execi pre ([],[],ret None) s) Q"
+  shows "wp_i (execi pre ([],[],ret None) s) Q"
   using assms
-  unfolding wp_rc_step_i_def
+  unfolding wp_i_def
   apply (intro allI impI)
   using step_i_replaced_calls.simps
   by simp
 lemma wp_step_i_ret_value_intro[wp_step_i_intros]:
   assumes "register_\<alpha> s v = Some v'"
   assumes "Q (flowi s (return_value (Some v')))"
-  shows "wp_rc_step_i (execi pre ([],[],ret (Some (t,v))) s) Q"
+  shows "wp_i (execi pre ([],[],ret (Some (t,v))) s) Q"
   using assms
-  unfolding wp_rc_step_i_def
+  unfolding wp_i_def
   apply (intro allI impI)
   using step_i_replaced_calls.simps register_\<alpha>_eq_get_register
   by simp
 lemma wp_step_i_phi_intro[wp_step_i_intros]:
   assumes "wp (execute_phi pre p s) (\<lambda>s'. Q (execi pre (ps,is,ter) s'))"
-  shows "wp_rc_step_i (execi pre (p#ps,is,ter) s) Q"
+  shows "wp_i (execi pre (p#ps,is,ter) s) Q"
 proof -
   obtain s' where "execute_phi pre p s = ok s'"
     using assms unfolding wp_def by (auto split: result.splits)
   then have "Q (execi pre (ps,is,ter) s')" using assms unfolding wp_def by simp
   then show ?thesis
-    unfolding wp_rc_step_i_def using step_i_replaced_calls.simps \<open>execute_phi pre p s = ok s'\<close>
+    unfolding wp_i_def using step_i_replaced_calls.simps \<open>execute_phi pre p s = ok s'\<close>
     by force
 qed
 lemma wp_step_i_instr_intro[wp_step_i_intros]:
@@ -919,8 +919,8 @@ lemma wp_step_i_instr_intro[wp_step_i_intros]:
   assumes "is_call i \<Longrightarrow> map_of annotations f = Some (fpre,bpres,fpost)"
   assumes "is_call i \<Longrightarrow> wp (prepare_state s (params fu) p) (\<lambda>s'. fpre s' \<and> (\<forall>s'' v'. fpost s' s'' v' \<longrightarrow> wp (restore_state s s'' v' na) (\<lambda>s'''. Q (execi pre ([],is,ter) s''') )))"
   assumes "\<not>is_call i \<Longrightarrow> wp (execute_instruction i s) (\<lambda>s'. Q (execi pre ([],is,ter) s'))"
-  shows "wp_rc_step_i (execi pre ([],i#is,ter) s) Q"
-  unfolding wp_rc_step_i_def apply (intro allI impI) subgoal premises prems for si'
+  shows "wp_i (execi pre ([],i#is,ter) s) Q"
+  unfolding wp_i_def apply (intro allI impI) subgoal premises prems for si'
 proof (cases "is_call i")
   case True
 
@@ -960,19 +960,19 @@ next
     using assms unfolding wp_def by (auto split: result.splits)
   then have "Q (execi pre ([],is,ter) s')" using assms False unfolding wp_def by simp
   then show ?thesis
-    unfolding wp_rc_step_i_def using step_i_replaced_calls.simps \<open>execute_instruction i s = ok s'\<close> False prems
+    unfolding wp_i_def using step_i_replaced_calls.simps \<open>execute_instruction i s = ok s'\<close> False prems
     by force \<comment> \<open> Takes a bit... \<close>
 qed
   done
 
 
-definition wp_steps_until where
-  "wp_steps_until fs Q \<equiv> (\<forall>fs'. step_until\<^sup>*\<^sup>* fs fs' \<and> \<not>is_errf fs \<longrightarrow> \<not>is_errf fs') \<and> (\<forall>fs'. (step_until)\<^sup>*\<^sup>* fs fs' \<and> has_annotation fs' \<longrightarrow> Q fs')"
+definition wp_u where
+  "wp_u fs Q \<equiv> (\<forall>fs'. step_until\<^sup>*\<^sup>* fs fs' \<and> \<not>is_errf fs \<longrightarrow> \<not>is_errf fs') \<and> (\<forall>fs'. (step_until)\<^sup>*\<^sup>* fs fs' \<and> has_annotation fs' \<longrightarrow> Q fs')"
 
-definition wp_annotated_step where
-  "wp_annotated_step fs Q \<equiv> (\<forall>fs'. ((fs \<Rightarrow> fs') \<longrightarrow> (\<not>is_errf fs' \<and> Q fs')))"
+definition wp_a where
+  "wp_a fs Q \<equiv> (\<forall>fs'. ((fs \<Rightarrow> fs') \<longrightarrow> (\<not>is_errf fs' \<and> Q fs')))"
 
-definition "floyd_cond init s p l f \<equiv> wp_annotated_step (branchf s p l f) (\<lambda>fs'. annotation_holds init fs')"
+definition "floyd_cond init s p l f \<equiv> wp_a (branchf s p l f) (\<lambda>fs'. annotation_holds init fs')"
 
 definition floyd_vc :: "bool" where
   "floyd_vc \<equiv> \<forall>f. (map_of program f \<noteq> None) \<longrightarrow> 
@@ -1005,18 +1005,18 @@ lemma step_until_closure_to_annotated_step:
 
 
 lemma wp_annotated_step_intro:
-  assumes "wp_step fs (\<lambda>fs'. wp_steps_until fs' Q)"
-  shows "wp_annotated_step fs Q"
+  assumes "wp_f fs (\<lambda>fs'. wp_u fs' Q)"
+  shows "wp_a fs Q"
   using assms
-  unfolding wp_annotated_step_def wp_step_def wp_steps_until_def annotated_step_def
+  unfolding wp_a_def wp_f_def wp_u_def annotated_step_def
   by blast
 
 lemma wp_steps_until_intro:
   assumes "has_annotation fs \<Longrightarrow> Q fs"
-  assumes "\<not>has_annotation fs \<Longrightarrow> wp_step fs (\<lambda>fs'. wp_steps_until fs' Q)"
-  shows "wp_steps_until fs Q"
+  assumes "\<not>has_annotation fs \<Longrightarrow> wp_f fs (\<lambda>fs'. wp_u fs' Q)"
+  shows "wp_u fs Q"
   using assms
-  unfolding wp_steps_until_def wp_step_def
+  unfolding wp_u_def wp_f_def
   apply (cases "has_annotation fs")
   using step_until_def converse_rtranclpE
   by metis+
@@ -1070,7 +1070,7 @@ lemma annotation_holds_impl_annotation_holds_single_step:
               apply (erule conjE)
               unfolding floyd_cond_def
               using None firstlab assms prems
-              unfolding wp_annotated_step_def annotation_holds_def
+              unfolding wp_a_def annotation_holds_def
               by auto
             done
           done
@@ -1105,7 +1105,7 @@ lemma annotation_holds_impl_annotation_holds_single_step:
                 by (simp split: option.splits)
               apply (erule allE[where x=s])
               unfolding floyd_cond_def
-              using assms(2,3) prems(1) wp_annotated_step_def
+              using assms(2,3) prems(1) wp_a_def
               by blast
             done
           done
@@ -1214,7 +1214,7 @@ lemma floyd_vc_impl_call_vc:
   subgoal for f fu fpre bpres fpost l s
     apply (intro impI)
     apply (elim conjE)
-    unfolding wp_func_replaced_calls_def
+    unfolding wp_fs_def
     apply (intro allI impI) apply (erule conjE)
     subgoal premises prems for s'
     proof -
@@ -1314,7 +1314,7 @@ lemma
   assumes "terminates_to_f p (branchf s None l f) sf'"
   shows "fpost s (state sf') (ret_value sf')"
   using assms floyd_vc_impl_global_vc
-  unfolding global_verification_condition_def wp_steps_f_def wp_steps_f_post_def
+  unfolding global_verification_condition_def wp_og_fs_def wp_steps_f_post_def
   by (metis function_state.sel(1) )
 
 

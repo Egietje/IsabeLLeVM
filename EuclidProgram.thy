@@ -223,61 +223,36 @@ abbreviation euclid_prog :: llvm_program where "euclid_prog \<equiv> [(gid ''sub
 
 abbreviation "global_vars_equal s s' \<equiv> \<forall>n. register_\<alpha> s' (reg (gid n)) = register_\<alpha> s (reg (gid n))"
 
+abbreviation "precond P s \<equiv> (\<exists>a b.
+      register_\<alpha> s (reg (lid ''a'')) = Some (vi32 a)
+    \<and> register_\<alpha> s (reg (lid ''b'')) = Some (vi32 b)
+    \<and> P a b)"
+
+abbreviation "postcond Q s s' v \<equiv> \<exists>a b r.
+      register_\<alpha> s (reg (lid ''a'')) = Some (vi32 a)
+    \<and> register_\<alpha> s (reg (lid ''b'')) = Some (vi32 b)
+    \<and> memory_\<alpha> s = memory_\<alpha> s' \<and> global_vars_equal s s'
+    \<and> v = Some (vi32 r) \<and> Q a b r"
+
 abbreviation sub_annots :: "precondition * block_preconditions * postcondition" where
   "sub_annots \<equiv> (
-    (\<lambda>s. \<exists>a b.
-      register_\<alpha> s (reg (lid ''a'')) = Some (vi32 a)
-    \<and> register_\<alpha> s (reg (lid ''b'')) = Some (vi32 b)
-    \<and> 0 \<le>s a
-    \<and> 0 \<le>s b
-    \<and> b \<le>s a
-    ),
+    precond (\<lambda>a b. 0 \<le>s a \<and> 0 \<le>s b \<and> b \<le>s a),
     [],
-    (\<lambda>s s' v. \<exists>a b.
-      register_\<alpha> s (reg (lid ''a'')) = Some (vi32 a)
-    \<and> register_\<alpha> s (reg (lid ''b'')) = Some (vi32 b)
-    \<and> v = Some (vi32 (a - b))
-    \<and> memory_\<alpha> s = memory_\<alpha> s'
-    \<and> global_vars_equal s s'
-    )
+    postcond (\<lambda>a b r. r = a - b)
   )"
 
 abbreviation rem_annots :: "precondition * block_preconditions * postcondition" where
   "rem_annots \<equiv> (
-    (\<lambda>s. \<exists>a b.
-      register_\<alpha> s (reg (lid ''a'')) = Some (vi32 a)
-    \<and> register_\<alpha> s (reg (lid ''b'')) = Some (vi32 b)
-    \<and> 0 \<le>s a
-    \<and> 1 \<le>s b
-    ),
+    precond (\<lambda>a b. 0 \<le>s a \<and> 1 \<le>s b ),
     [],
-    (\<lambda>s s' v. \<exists>a b r.
-      register_\<alpha> s (reg (lid ''a'')) = Some (vi32 a)
-    \<and> register_\<alpha> s (reg (lid ''b'')) = Some (vi32 b)
-    \<and> v = Some (vi32 (r))
-    \<and> sint r = (sint a) mod (sint b)
-    \<and> memory_\<alpha> s = memory_\<alpha> s'
-    \<and> global_vars_equal s s'
-    )
+    postcond (\<lambda>a b r. sint r = (sint a) mod (sint b))
   )"
 
 abbreviation gcd_annots :: "precondition * block_preconditions * postcondition" where
   "gcd_annots \<equiv> (
-    (\<lambda>s. \<exists>a b.
-      register_\<alpha> s (reg (lid ''a'')) = Some (vi32 a)
-    \<and> register_\<alpha> s (reg (lid ''b'')) = Some (vi32 b)
-    \<and> 0 \<le>s a
-    \<and> 0 \<le>s b
-    ),
+    precond (\<lambda>a b. 0 \<le>s a \<and> 0 \<le>s b ),
     [],
-    (\<lambda>s s' v. \<exists>a b r.
-      register_\<alpha> s (reg (lid ''a'')) = Some (vi32 a)
-    \<and> register_\<alpha> s (reg (lid ''b'')) = Some (vi32 b)
-    \<and> v = Some (vi32 (r))
-    \<and> sint r = gcd (sint a) (sint b)
-    \<and> memory_\<alpha> s = memory_\<alpha> s'
-    \<and> global_vars_equal s s'
-    )
+    postcond (\<lambda>a b r. sint r = gcd (sint a) (sint b))
   )"
 
 
@@ -297,7 +272,7 @@ lemma "verify_program euclid_prog euclid_annots"
 
   subgoal (* rem function *)
     apply (vcg_verify_function annot: euclid_annots_def) 
-    apply (all \<open>((simp add: word_sle_eq word_sless_eq; force); fail)?\<close>)
+    apply (all \<open>((simp add: word_sle_eq word_sless_eq; force  ); fail)?\<close>)
     subgoal
       apply (simp add: word_sle_eq word_sless_eq)
       by (metis mod_pos_pos_trivial order_le_imp_less_or_eq word_sint.Rep_inverse)

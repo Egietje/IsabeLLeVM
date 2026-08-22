@@ -278,8 +278,8 @@ method unfold_first_label uses func =
   (subst func)?,
   simp del: split_paired_All
 
-method vcg_step uses prog func =
-  rule asm_rl[of "wp_step _ _ _ _"],
+method vcg_f uses prog func =
+  rule asm_rl[of "wp_f _ _ _ _"],
   rule wp_step_intro,
   (subst prog)?,
   simp,
@@ -290,7 +290,7 @@ method unfold_floyd_cond uses prog func =
   rule asm_rl[of "floyd_cond _ _ _ _ _ _ _"],
   subst floyd_cond_def,
   rule wp_annotated_step_intro,
-  (vcg_step prog: prog func: func),
+  (vcg_f prog: prog func: func),
   clean_assms
   
 
@@ -303,25 +303,25 @@ method vcg_verify_program uses prog =
   (intro conjI)?
 
 
-method vcg_step_phi =
-  rule asm_rl[of "wp_rc_step_i _ _ (execi _ (_#_,_,_) _) _"],
+method vcg_i_phi =
+  rule asm_rl[of "wp_i _ _ (execi _ (_#_,_,_) _) _"],
   intro wp_step_i_intros;
   strat_phi
 
-method vcg_step_instr =
-  rule asm_rl[of "wp_rc_step_i _ _ (execi _ ([],_#_,_) _) _"],
+method vcg_i_instr =
+  rule asm_rl[of "wp_i _ _ (execi _ ([],_#_,_) _) _"],
   intro wp_step_i_intros;
   (simp; fail)?;
   (thin_tac "\<not>is_call _" | thin_tac "is_call _")?;
   vcg_instr+
 
-method vcg_step_ter =
-  rule asm_rl[of "wp_rc_step_i _ _ (execi _ ([],[],_) _) _"],
+method vcg_i_ter =
+  rule asm_rl[of "wp_i _ _ (execi _ ([],[],_) _) _"],
   intro wp_step_i_intros,
   (simp; fail)?
 
-method vcg_call uses func prog annot =
-  (rule asm_rl[of "wp_rc_step_i _ _ (execi _ (_, (call _ _ _ _)#_, _) _) _"]),
+method vcg_i_call uses func prog annot =
+  (rule asm_rl[of "wp_i _ _ (execi _ (_, (call _ _ _ _)#_, _) _) _"]),
   (intro wp_step_i_intros; (simp; fail)?; (thin_tac "\<not>is_call _" | thin_tac "is_call _")?),
   solve_subgoal_map_of def: prog,
   solve_subgoal_first_label func: func,
@@ -329,16 +329,16 @@ method vcg_call uses func prog annot =
   vcg_prepare_state func: func,
   vcg_restore_state
 
-method vcg_steps_execi uses block func prog annot =
-  rule asm_rl[of "wp_rc_steps_i _ _ (execi _ _ _) _"],
+method vcg_is_execi uses block func prog annot =
+  rule asm_rl[of "wp_is _ _ (execi _ _ _) _"],
   rule wp_rc_steps_i_intro;
   (simp; fail)?;
   (thin_tac "\<not>(_ \<nexists>\<rightarrow>\<^sub>i)" | thin_tac "_ \<nexists>\<rightarrow>\<^sub>i")?,
   (subst block)?,
-  (vcg_call func: func prog: prog annot: annot | vcg_step_phi | vcg_step_instr | vcg_step_ter)
+  (vcg_i_call func: func prog: prog annot: annot | vcg_i_phi | vcg_i_instr | vcg_i_ter)
 
-method vcg_steps_flowi_branch uses block prog annot =
-  rule asm_rl[of "wp_rc_steps_i _ _ (flowi _ (branch_label _)) _"],
+method vcg_is_branch uses block prog annot =
+  rule asm_rl[of "wp_is _ _ (flowi _ (branch_label _)) _"],
   rule wp_rc_steps_i_intro;
   ((simp only: terminal_state_simps; fail) | (simp; fail)?);
   (thin_tac "\<not>(_ \<nexists>\<rightarrow>\<^sub>i)" | thin_tac "_ \<nexists>\<rightarrow>\<^sub>i")?,
@@ -347,8 +347,8 @@ method vcg_steps_flowi_branch uses block prog annot =
   ((subst (asm) has_annotation_def, (subst (asm) prog)?, (subst (asm) annot)?, simp); fail)?,
   (thin_tac "has_annotation _ _ _" | thin_tac "\<not>has_annotation _ _ _")?
 
-method vcg_steps_flowi_return uses block prog annot =
-  rule asm_rl[of "wp_rc_steps_i _ _ (flowi _ (return_value _)) _"],
+method vcg_is_return uses block prog annot =
+  rule asm_rl[of "wp_is _ _ (flowi _ (return_value _)) _"],
   rule wp_rc_steps_i_intro;
   (simp; fail)?;
   (thin_tac "\<not>(_ \<nexists>\<rightarrow>\<^sub>i)" | thin_tac "_ \<nexists>\<rightarrow>\<^sub>i")?,
@@ -357,11 +357,11 @@ method vcg_steps_flowi_return uses block prog annot =
   ((subst (asm) has_annotation_def, (subst (asm) prog)?, (subst (asm) annot)?, simp); fail)?,
   (thin_tac "has_annotation _ _ _" | thin_tac "\<not>has_annotation _ _ _")?
 
-method vcg_steps uses block prog annot func =
-  vcg_steps_execi block: block func: func prog: prog annot: annot |
-  vcg_steps_flowi_branch block: block prog: prog annot: annot |
-  vcg_steps_flowi_return block: block prog: prog annot: annot |
-  vcg_step prog: prog func: func
+method vcg_is uses block prog annot func =
+  vcg_is_execi block: block func: func prog: prog annot: annot |
+  vcg_is_branch block: block prog: prog annot: annot |
+  vcg_is_return block: block prog: prog annot: annot |
+  vcg_f prog: prog func: func
 
 method unfold_annotation_holds uses prog annot =
   (subst annotation_holds_def)?,
@@ -380,9 +380,9 @@ method unfold_precond uses annot prog =
   (simp (no_asm_use) del: split_paired_All)?,
   clean_assms
 
-method vcg_all_steps uses blocks prog annot func =
-  vcg_steps block: blocks prog: prog annot: annot func: func;
-  (vcg_all_steps blocks: blocks prog: prog annot: annot func: func | succeed);
+method vcg_all_is uses blocks prog annot func =
+  vcg_is block: blocks prog: prog annot: annot func: func;
+  (vcg_all_is blocks: blocks prog: prog annot: annot func: func | succeed);
   (unfold_annotation_holds prog: prog annot: annot)?
 
 method vcg_verify_function uses annot prog func blocks =
@@ -393,7 +393,7 @@ method vcg_verify_function uses annot prog func blocks =
   (intro conjI, solve_subgoal_first_label func: func); unfold_first_label func: func;
   intro allI impI conjI; unfold_floyd_cond prog: prog func: func);
   (unfold_precond prog: prog annot: annot)?;
-  vcg_all_steps blocks: blocks prog: prog annot: annot func: func   
+  vcg_all_is blocks: blocks prog: prog annot: annot func: func   
        
   
 
