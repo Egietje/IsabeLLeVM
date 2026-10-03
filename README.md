@@ -3,6 +3,8 @@
 This project serves as my master's thesis at University of Twente.
 I am supervised by dr. P. Lammich and E. Putti.
 
+Examples of verified programs can be found under `case-study`.
+
 
 # Abstract
 
