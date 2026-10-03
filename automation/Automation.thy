@@ -1,8 +1,92 @@
-theory VCG
-  imports "Steps" "HOL-Eisbach.Eisbach" "Word_Lib/Word_32" "Word_Lib/Word_64"
+theory Automation
+  imports "../verification/FloydsMethod" "HOL-Eisbach.Eisbach" "../Word_Lib/Word_32" "../Word_Lib/Word_64" "../verification/InstructionTriples"
 begin
 
 section "Useful Shorthands"
+
+
+fun verify_blocks :: "llvm_program \<Rightarrow> annotations \<Rightarrow> block_preconditions \<Rightarrow> llvm_identifier \<Rightarrow> state \<Rightarrow> bool" where
+  "verify_blocks _ _ [] _ _ = True"
+| "verify_blocks p a (((prev, lab), precond) # bpres) f init = 
+    ((\<forall>s. annotation_holds p a init (branchf s (Some prev) lab f) \<longrightarrow> floyd_cond p a init s (Some prev) lab f) 
+     \<and> verify_blocks p a bpres f init)"
+
+fun verify_function :: "llvm_program \<Rightarrow> annotations \<Rightarrow> llvm_identifier \<Rightarrow> llvm_function \<Rightarrow> bool" where
+  "verify_function p a fl fb =
+     (case map_of a fl of
+        None \<Rightarrow> False 
+      | Some (fpre, bpres, fpost) \<Rightarrow> 
+          (first_label fb \<noteq> None \<and> 
+           (\<forall>init. fpre init \<longrightarrow> 
+              floyd_cond p a init init None (the (first_label fb)) fl \<and> 
+              verify_blocks p a bpres fl init)))"
+
+fun verify_program' :: "llvm_program \<Rightarrow> llvm_program \<Rightarrow> annotations \<Rightarrow> bool" where
+  "verify_program' [] _ _ = True"
+| "verify_program' ((fl, fb) # fs) p a = (verify_function p a fl fb \<and> verify_program' fs p a)"
+
+fun verify_program :: "llvm_program \<Rightarrow> annotations \<Rightarrow> bool" where
+  "verify_program p a = verify_program' p p a"
+
+
+lemma verify_program_members:
+  assumes "verify_program' fs p a"
+  assumes "(fl, fb) \<in> set fs"
+  shows "verify_function p a fl fb"
+  using assms
+  by (induction fs) auto
+
+
+lemma verify_blocks_imp_floyd_cond:
+  assumes "verify_blocks p a bpres f init"
+  assumes "map_of bpres (pred, l) = Some precond"
+  assumes "annotation_holds p a init (branchf s (Some pred) l f)"
+  shows "floyd_cond p a init s (Some pred) l f"
+  using assms
+proof (induction bpres)
+  case Nil
+  then show ?case by simp
+next
+  case (Cons pair bpres)
+  obtain prev lab pc where pair_def: "pair = ((prev, lab), pc)" apply (cases pair) by fast
+  then show ?case
+    using Cons
+    apply (auto split: if_splits) 
+    using Cons verify_blocks.simps by fast
+qed
+
+
+lemma verify_program_impl_floyd_vc:
+  assumes "verify_program' program program annotations"
+  shows "floyd_vc program annotations"
+  unfolding floyd_vc_def
+  apply (intro allI impI)
+  subgoal for f
+    apply (cases "map_of program f")
+     apply simp
+    subgoal premises prems for fu
+    proof -
+      have f_in_set: "(f, fu) \<in> set program"
+        using map_of_SomeD prems
+        by fast
+
+      have "verify_function program annotations f fu"
+        using assms f_in_set verify_program_members by blast
+
+      then show ?thesis 
+        using prems f_in_set
+        apply (simp split: option.splits del: split_paired_All)
+        apply (intro conjI) apply blast apply (elim conjE) using verify_blocks_imp_floyd_cond by blast
+    qed
+    done
+  done
+
+lemma verify_program_impl_correctness_notion:
+  assumes "verify_program program annotations"
+  shows "correctness_notion program annotations"
+  using assms verify_program_impl_floyd_vc floyd_vc_impl_global_vc
+  by simp
+
 
 abbreviation register_contains_value :: "llvm_identifier \<Rightarrow> llvm_value \<Rightarrow> state \<Rightarrow> bool" where
   "register_contains_value n v s \<equiv> register_\<alpha> s (reg n) = Some v"
@@ -82,20 +166,20 @@ method solve_subgoal = sub_instantiate_register_address | sub_memory_valid | sub
 
 subsection "Instruction Methods"
 
-method strat_instr methods m = rule wp_intro, m, clean_assms
+method strat_instr methods m = rule wp_rules, m, clean_assms
 
 method strat_alloca = rule asm_rl[of "wp (execute_alloca _ _) _"], strat_instr \<open>-\<close>
 method strat_store  = rule asm_rl[of "wp (execute_store _ _ _) _"], strat_instr \<open>sub_instantiate_register_address, sub_register_value\<close>
 method strat_load   = rule asm_rl[of "wp (execute_load _ _ _) _"], strat_instr \<open>sub_instantiate_register_address, sub_memory_value\<close>
 method strat_add    = rule asm_rl[of "wp (execute_add _ _ _ _ _) _"], strat_instr \<open>sub_register_value, sub_register_value\<close>
 method strat_icmp   = rule asm_rl[of "wp (execute_icmp _ _ _ _ _ _) _"],
-  ((rule icmp1_wp_intro, sub_register_value, sub_register_value)
-  | (rule icmp32_wp_intro, sub_register_value, sub_register_value)
-  | (rule icmp64_wp_intro, sub_register_value, sub_register_value)),
+  ((rule icmp1_triple, sub_register_value, sub_register_value)
+  | (rule icmp32_triple, sub_register_value, sub_register_value)
+  | (rule icmp64_triple, sub_register_value, sub_register_value)),
   clean_assms,
   simp only: compare_values_1.simps compare_values_32.simps compare_values_64.simps
 
-method unfold_instr = rule asm_rl[of "wp (execute_instruction _ _) _"], rule wp_intro
+method unfold_instr = rule asm_rl[of "wp (execute_instruction _ _) _"], rule wp_rules
                                                                                           
 method vcg_instr = unfold_instr | strat_alloca | strat_store | strat_load | strat_add | strat_icmp
 
@@ -249,10 +333,10 @@ method remove_invalid_premise =
 
 method vcg_set_register = 
   rule asm_rl[of "wp (set_register _ _ (pop_frame _ _)) _"],
-  rule wp_intro, defer_tac 
+  rule wp_rules, defer_tac 
 method vcg_wp_ok =
   rule asm_rl[of "wp (ok _) _"],
-  rule wp_intro
+  rule wp_rules
 
 method clean_assms_after_call =
   elim conjE,
@@ -279,8 +363,8 @@ method unfold_first_label uses func =
   simp del: split_paired_All
 
 method vcg_f uses prog func =
-  rule asm_rl[of "wp_f _ _ _ _"],
-  rule wp_step_intro,
+  rule asm_rl[of "wp_f_with_summarization _ _ _ _"],
+  rule unfold_wp_f,
   (subst prog)?,
   simp,
   (subst func)?,
@@ -304,25 +388,25 @@ method vcg_verify_program uses prog =
 
 
 method vcg_i_phi =
-  rule asm_rl[of "wp_i _ _ (execi _ (_#_,_,_) _) _"],
-  intro wp_step_i_intros;
+  rule asm_rl[of "wp_i_with_summarization _ _ (execi _ (_#_,_,_) _) _"],
+  intro unfold_wp_i;
   strat_phi
 
 method vcg_i_instr =
-  rule asm_rl[of "wp_i _ _ (execi _ ([],_#_,_) _) _"],
-  intro wp_step_i_intros;
+  rule asm_rl[of "wp_i_with_summarization _ _ (execi _ ([],_#_,_) _) _"],
+  intro unfold_wp_i;
   (simp; fail)?;
   (thin_tac "\<not>is_call _" | thin_tac "is_call _")?;
   vcg_instr+
 
 method vcg_i_ter =
-  rule asm_rl[of "wp_i _ _ (execi _ ([],[],_) _) _"],
-  intro wp_step_i_intros,
+  rule asm_rl[of "wp_i_with_summarization _ _ (execi _ ([],[],_) _) _"],
+  intro unfold_wp_i,
   (simp; fail)?
 
 method vcg_i_call uses func prog annot =
-  (rule asm_rl[of "wp_i _ _ (execi _ (_, (call _ _ _ _)#_, _) _) _"]),
-  (intro wp_step_i_intros; (simp; fail)?; (thin_tac "\<not>is_call _" | thin_tac "is_call _")?),
+  (rule asm_rl[of "wp_i_with_summarization _ _ (execi _ (_, (call _ _ _ _)#_, _) _) _"]),
+  (intro unfold_wp_i; (simp; fail)?; (thin_tac "\<not>is_call _" | thin_tac "is_call _")?),
   solve_subgoal_map_of def: prog,
   solve_subgoal_first_label func: func,
   solve_subgoal_map_of def: annot,
@@ -330,16 +414,16 @@ method vcg_i_call uses func prog annot =
   vcg_restore_state
 
 method vcg_is_execi uses block func prog annot =
-  rule asm_rl[of "wp_is _ _ (execi _ _ _) _"],
-  rule wp_rc_steps_i_intro;
+  rule asm_rl[of "wp_is_with_summarization _ _ (execi _ _ _) _"],
+  rule unfold_wp_is;
   (simp; fail)?;
   (thin_tac "\<not>(_ \<nexists>\<rightarrow>\<^sub>i)" | thin_tac "_ \<nexists>\<rightarrow>\<^sub>i")?,
   (subst block)?,
   (vcg_i_call func: func prog: prog annot: annot | vcg_i_phi | vcg_i_instr | vcg_i_ter)
 
 method vcg_is_branch uses block prog annot =
-  rule asm_rl[of "wp_is _ _ (flowi _ (branch_label _)) _"],
-  rule wp_rc_steps_i_intro;
+  rule asm_rl[of "wp_is_with_summarization _ _ (flowi _ (branch_label _)) _"],
+  rule unfold_wp_is;
   ((simp only: terminal_state_simps; fail) | (simp; fail)?);
   (thin_tac "\<not>(_ \<nexists>\<rightarrow>\<^sub>i)" | thin_tac "_ \<nexists>\<rightarrow>\<^sub>i")?,
   (simp (no_asm))?,
@@ -348,8 +432,8 @@ method vcg_is_branch uses block prog annot =
   (thin_tac "has_annotation _ _ _" | thin_tac "\<not>has_annotation _ _ _")?
 
 method vcg_is_return uses block prog annot =
-  rule asm_rl[of "wp_is _ _ (flowi _ (return_value _)) _"],
-  rule wp_rc_steps_i_intro;
+  rule asm_rl[of "wp_is_with_summarization _ _ (flowi _ (return_value _)) _"],
+  rule unfold_wp_is;
   (simp; fail)?;
   (thin_tac "\<not>(_ \<nexists>\<rightarrow>\<^sub>i)" | thin_tac "_ \<nexists>\<rightarrow>\<^sub>i")?,
   simp (no_asm),
@@ -385,7 +469,7 @@ method vcg_all_is uses blocks prog annot func =
   (vcg_all_is blocks: blocks prog: prog annot: annot func: func | succeed);
   (unfold_annotation_holds prog: prog annot: annot)?
 
-method vcg_verify_function uses annot prog func blocks =
+method vcg_function uses annot prog func blocks =
   (rule asm_rl[of "verify_function _ _ _ _"],
   simp,
   (subst (3) annot)?,
@@ -395,8 +479,13 @@ method vcg_verify_function uses annot prog func blocks =
   (unfold_precond prog: prog annot: annot)?;
   vcg_all_is blocks: blocks prog: prog annot: annot func: func   
        
-  
+method vcg_program uses prog =
+  (rule verify_program_impl_correctness_notion), vcg_verify_program prog: prog
 
+
+method vcg uses annot prog func blocks =
+  vcg_program prog: prog;
+  vcg_function annot: annot prog: prog func: func blocks: blocks
 
 
 

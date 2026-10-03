@@ -1,5 +1,5 @@
 theory EvenOddProgram
-  imports "HOL-Library.AList_Mapping" "VCG"
+  imports "../IsabeLLeVM"
 begin
 
 section "Even/odd Functions"
@@ -123,19 +123,19 @@ definition even_odd_annots :: "annotations" where
 
 
 
-lemma verify_even_odd:
-  "verify_program even_odd_prog even_odd_annots"
-  apply (vcg_verify_program prog: even_odd_prog_def)
+lemma even_odd_correct:
+  "correctness_notion even_odd_prog even_odd_annots"
+  apply (vcg_program prog: even_odd_prog_def)
 
   subgoal (* even function *)
-    apply (vcg_verify_function blocks: even_entry_def even_if_def even_else_def even_return_def prog: even_odd_prog_def annot: even_odd_annots_def func: even_func_def odd_func_def)
+    apply (vcg_function blocks: even_entry_def even_if_def even_else_def even_return_def prog: even_odd_prog_def annot: even_odd_annots_def func: even_func_def odd_func_def)
     apply (all \<open>((intro conjI)?; ((simp; fail)?))\<close>)
     apply (auto split: if_splits simp: even_odd_prog_def)
     apply (smt (verit, del_insts) add.inverse_neutral add_diff_cancel_right' diff_minus_eq_add fun_upd_same signed.nle_le signed_arith_eq_checks_to_ord(1) signed_minus_1
           word_sle_eq)
     by (simp add: word_sless_alt word_sle_eq signed.leD)
   subgoal (* odd function *)
-    apply (vcg_verify_function blocks: odd_entry_def prog: even_odd_prog_def annot: even_odd_annots_def func: even_func_def odd_func_def)
+    apply (vcg_function blocks: odd_entry_def prog: even_odd_prog_def annot: even_odd_annots_def func: even_func_def odd_func_def)
     unfolding even_odd_prog_def
     by (auto split: if_splits)
   done

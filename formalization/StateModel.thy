@@ -1,78 +1,87 @@
-theory Definitions
-  imports "Word_Lib/Word_Names" "HOL-Library.Mapping" "Result"
+theory StateModel
+  imports Syntax "HOL-Library.Monad_Syntax"
 begin
 
-section "LLVM AST"
+section "Result Monad"
+
+subsection "Type"
+
+datatype error = unknown_register_name | invalid_address | global_register_overwrite
+  | not_an_address | incompatible_types | unknown_label
+  | phi_no_previous_block | phi_label_not_found | phi_label_not_distinct
+  | internal_error | unfreeable_memory | invalid_parameter_length | no_return_value
+
+datatype 'a result = ok 'a | err error
 
 
-subsection "Types and values"
+subsection "Monadic Operations"
 
-datatype llvm_type = i1 | i32 | i64 | addr_type
+definition bind :: "'a result \<Rightarrow> ('a \<Rightarrow> 'b result) \<Rightarrow> 'b result" where
+  "bind R f = (case R of err e \<Rightarrow> err e | ok x \<Rightarrow> f x)"
 
-type_synonym memory_model_address = nat
-datatype llvm_address = saddr memory_model_address | haddr memory_model_address | gaddr memory_model_address
+definition return :: "'a \<Rightarrow> 'a result" where
+  "return x = ok x"
 
-datatype llvm_value = vi1 bool | vi32 word32 | vi64 word64 | addr llvm_address | poison
+adhoc_overloading
+  Monad_Syntax.bind==bind
 
-datatype llvm_identifier = is_lid: lid string | gid string
-
-
-
-datatype llvm_value_ref = reg llvm_identifier | val llvm_value
-
-(* Should only have a memory address or memory address... *)
-type_synonym llvm_pointer = llvm_value_ref
+fun assert where "assert e True = ok ()" | "assert e False = err e"
 
 
-subsection "Instructions"
-
-type_synonym llvm_align = int
-
-datatype llvm_add_wrap = add_nuw | add_nsw | add_nuw_nsw | add_default
-datatype llvm_compare_condition = comp_eq | comp_ne
-                                | comp_ugt | comp_uge | comp_ult | comp_ule
-                                | comp_sgt | comp_sge | comp_slt | comp_sle
-type_synonym llvm_same_sign = bool
-
-datatype llvm_phi_node = phi llvm_identifier llvm_type "(llvm_identifier * llvm_value_ref) list"
+subsection "Lemmas"
 
 
-datatype llvm_instruction = alloca llvm_identifier llvm_type "llvm_align option"
-                          | store llvm_type llvm_value_ref llvm_pointer "llvm_align option"
-                          | load llvm_identifier llvm_type llvm_pointer "llvm_align option"
-                          | add llvm_identifier llvm_add_wrap llvm_type llvm_value_ref llvm_value_ref
-                          | icmp llvm_identifier llvm_same_sign llvm_compare_condition llvm_type llvm_value_ref llvm_value_ref
-                          | is_call: call "llvm_identifier option" llvm_type llvm_identifier "(llvm_type * llvm_value_ref) list"
-
-datatype llvm_terminator_instruction = ret "(llvm_type * llvm_value_ref) option"
-                                     | br_i1 llvm_value_ref llvm_identifier llvm_identifier
-                                     | br_label llvm_identifier
+context
+  notes bind_def[simp] return_def[simp]
+begin
 
 
-subsection "Blocks, functions, programs"
+(* Monad laws *)
 
-type_synonym llvm_instruction_block = "(llvm_phi_node list * llvm_instruction list * llvm_terminator_instruction)"
+lemma result_monad_left_identity[simp]: "do {x'\<leftarrow>return x; f x'} = f x"
+  by auto
 
-type_synonym llvm_labeled_blocks = "(llvm_identifier * llvm_instruction_block) list"
+lemma result_monad_right_identity[simp]: "do {x \<leftarrow> m; return x} = m"
+  by (cases m; simp)
 
-datatype llvm_block_return = return_value "llvm_value option"
-                           | branch_label llvm_identifier
-
-datatype llvm_function = func llvm_type (params: "(llvm_identifier * llvm_type) list") (blocks: llvm_labeled_blocks)
-hide_const (open) llvm_function.blocks
-
-type_synonym llvm_program = "(llvm_identifier * llvm_function) list"
+lemma result_monad_associative[simp]: "do {y \<leftarrow> do {x \<leftarrow> (m::'a result); f x}; g y} = do {x \<leftarrow> m; do {y \<leftarrow> f x; g y}}"
+  by (cases m; simp)
 
 
+(* Simps *)
 
-section "State"
+lemma assert_ok_iff[simp]: "assert e P = ok x \<longleftrightarrow> P"
+  by (cases P; simp)
+
+lemma assert_err_iff[simp]: "assert e P = err e' \<longleftrightarrow> \<not>P \<and> e'=e"
+  by (cases P; auto)
 
 
-subsection "Definitions"
+lemma result_bind_ok_iff[simp]: "do { x\<leftarrow>m; f x } = ok v \<longleftrightarrow> (\<exists>x. m = ok x \<and> f x = ok v)"
+  by (cases m; simp)
+
+lemma result_bind_ok_unit[simp]: "do {ok (); f y} = do {f y}"
+  by simp
+
+lemma result_bind_err_iff[simp]: "do { x\<leftarrow>m; f x } = err e \<longleftrightarrow> (m = err e \<or> (\<exists>x. m = ok x \<and> f x = err e))"
+  by (cases m; simp)
+
+lemma result_return_ok_iff[simp]: "return x = ok y \<longleftrightarrow> x = y"
+  by simp
+
+lemma result_err_propagate[simp]: "do {x \<leftarrow> err e; f x} = err e"
+  by auto
+
+lemma result_let_in[simp]: "do { z \<leftarrow> (let x = y in (f x :: 'a result)); g z} = (let x = y in (do {z \<leftarrow> f x; g z }))"
+  by simp
+
+end
+
+
+section "Execution State"
 
 type_synonym llvm_register_model = "(string, llvm_value) mapping"
 type_synonym llvm_global_variable_model = "(string, memory_model_address) mapping"
-
 
 
 datatype memory_value = mem_unset | mem_val llvm_value | mem_freed
@@ -88,19 +97,21 @@ definition empty_state :: "state" where
   "empty_state = (Mapping.empty, Mapping.empty, empty_memory, empty_memory, empty_memory)"
 
 
+section "Basic State Operations"
+
 subsection "Register operations"
 
 (* Get *)
-fun get_register :: "llvm_register_model \<Rightarrow> string \<Rightarrow> llvm_value result" where
-  "get_register r n = (case Mapping.lookup r n of None \<Rightarrow> err unknown_register_name | Some v \<Rightarrow> ok v)"
+fun get_local_register :: "llvm_register_model \<Rightarrow> string \<Rightarrow> llvm_value result" where
+  "get_local_register r n = (case Mapping.lookup r n of None \<Rightarrow> err unknown_register_name | Some v \<Rightarrow> ok v)"
 
 fun get_global_var :: "llvm_global_variable_model \<Rightarrow> string \<Rightarrow> llvm_value result" where
   "get_global_var r n = (case Mapping.lookup r n of None \<Rightarrow> err unknown_register_name | Some v \<Rightarrow> ok (addr (gaddr v)))"
 
-fun dereference :: "state \<Rightarrow> llvm_value_ref \<Rightarrow> llvm_value result" where
-  "dereference _ (val v) = ok v"
-| "dereference (lr,gr,sm,hm,gm) (reg (lid n)) = get_register lr n"
-| "dereference (lr,gr,sm,hm,gm) (reg (gid n)) = get_global_var gr n"
+fun get_register :: "state \<Rightarrow> llvm_value_ref \<Rightarrow> llvm_value result" where
+  "get_register _ (val v) = ok v"
+| "get_register (lr,gr,sm,hm,gm) (reg (lid n)) = get_local_register lr n"
+| "get_register (lr,gr,sm,hm,gm) (reg (gid n)) = get_global_var gr n"
 
 
 (* Set *)
@@ -110,6 +121,7 @@ definition set_single_register :: "string \<Rightarrow> llvm_value \<Rightarrow>
 fun set_register :: "llvm_identifier \<Rightarrow> llvm_value \<Rightarrow> state \<Rightarrow> state result" where
   "set_register (lid n) v (lr,gr,sm,hm,gm) = ok (set_single_register n v lr,gr,sm,hm,gm)"
 | "set_register _ _ _ = err global_register_overwrite"
+
 
 subsection "Memory operations"
 
@@ -227,6 +239,51 @@ fun register_\<alpha> :: "state \<Rightarrow> llvm_value_ref \<Rightarrow> llvm_
   "register_\<alpha> (lr,gr,sm,hm,gm) (val v) = Some v"
 | "register_\<alpha> (lr,gr,sm,hm,gm) (reg (lid n)) = Mapping.lookup lr n"
 | "register_\<alpha> (lr,gr,sm,hm,gm) (reg (gid n)) = (case Mapping.lookup gr n of Some a \<Rightarrow> Some (addr (gaddr a)) | None \<Rightarrow> None)"
+
+
+subsection "Properties"
+
+
+lemma memory_\<alpha>_eq[simp]: "memory_\<alpha> (lr,gr,sm,hm,gm) = memory_\<alpha> (lr',gr',sm,hm,gm)"
+  apply (rule ext)
+  subgoal for x
+    by (cases x; simp)
+  done
+
+lemma register_\<alpha>_lid_update_eq[simp]:
+  "register_\<alpha> (Mapping.update n v lr,gr,sm,hm,gm) = (register_\<alpha> (lr,gr,sm,hm,gm))(reg (lid n) := Some v)"
+  apply (auto simp: fun_eq_iff split: llvm_value_ref.split)
+  subgoal for x apply (cases x; simp) subgoal for id by (cases id; simp)
+  done
+  done
+
+lemma register_\<alpha>_val_eq[simp]:
+  "register_\<alpha> s (val v) = Some v"
+  by (cases s; simp)
+
+lemma register_\<alpha>_update_independent[simp]:
+  "(register_\<alpha> s)(x := v) = register_\<alpha> s' \<Longrightarrow> x \<noteq> y \<Longrightarrow> register_\<alpha> s y = register_\<alpha> s' y"
+  by (metis fun_upd_other)
+
+lemma register_\<alpha>_eq_get_register:
+  "register_\<alpha> s v = Some v' \<longleftrightarrow> get_register s v = ok v'"
+  apply (cases s; cases v; auto)
+  subgoal for _ _ _ _ _ n by (cases n; simp split: option.splits)
+  subgoal for _ _ _ _ _ n by (cases n; simp split: option.splits)
+  done
+
+lemma set_register_\<alpha>:
+  "set_register n v s = ok s' \<Longrightarrow> register_\<alpha> s' = (register_\<alpha> s)(reg n := Some v)"
+  apply (cases s; rule ext)
+  subgoal for l' g' s' h' x by (cases x; cases n; auto simp: set_single_register_def)
+  done
+
+
+lemma "s' = push_frame s \<Longrightarrow> s'' = f s' \<Longrightarrow> s''' = pop_frame s s'' \<Longrightarrow> \<forall>n. register_\<alpha> s''' (reg (lid n)) = register_\<alpha> s (reg (lid n))"
+  by (cases s; cases s'; cases s''; cases s'''; fastforce)
+
+lemma "s' = push_frame s \<Longrightarrow> s'' = f s' \<Longrightarrow> s''' = pop_frame s s'' \<Longrightarrow> \<forall>n. register_\<alpha> s''' (reg (gid n)) = register_\<alpha> s'' (reg (gid n))"
+  by (cases s; cases s'; cases s''; cases s'''; fastforce)
 
 
 

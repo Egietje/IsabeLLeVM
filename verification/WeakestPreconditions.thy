@@ -1,8 +1,143 @@
-theory Memory    
-  imports Definitions
+theory WeakestPreconditions
+  imports Correctness
 begin
 
-section "Simps"
+ML \<open>
+val _ =
+  Theory.setup
+    (Attrib.setup \<^binding>\<open>rearranged\<close>
+      (Scan.lift (Parse.$$$ "(" |-- Parse.enum1 "," Parse.nat --| Parse.$$$ ")")
+        >> (fn ps =>
+              Thm.rule_attribute [] (fn _ => Drule.rearrange_prems ps)))
+      "rearrange theorem premises");
+\<close>
+
+context
+  fixes program :: "llvm_program"
+  fixes annotations :: "annotations"
+begin
+
+section "Definitions"
+
+definition wp_f where
+  "wp_f fs Q \<equiv> (\<forall>fs'. step_f program fs fs' \<longrightarrow> \<not>error_state fs' \<and> Q fs')"
+
+definition wp_is where
+  "wp_is s Q \<equiv> (\<forall>s'. ((step_i program)\<^sup>*\<^sup>* s s' \<and> s' \<nexists>\<rightarrow>\<^sub>i) \<longrightarrow> (\<not>is_erri s' \<and> Q s'))"
+
+definition wp_i where
+  "wp_i s Q \<equiv> (\<forall>s'. (step_i program s s') \<longrightarrow> (\<not>is_erri s' \<and> Q s'))"
+
+definition wp :: "'a result \<Rightarrow> ('a \<Rightarrow> bool) \<Rightarrow> bool" where
+  "wp m P = (case m of ok v \<Rightarrow> P v | err e \<Rightarrow> False)"
+
+
+
+
+section "Monadic Programs"
+
+named_theorems wp_rules
+
+context
+  notes wp_def[simp]
+begin
+
+subsection "Predicate Transformation Rules"
+
+lemma wp_impl_ok[simp]:
+  assumes "wp x Q"
+  shows "\<exists>v. x = ok v"
+  using assms
+  by (cases x; simp)
+
+lemma consequence:
+  assumes "wp x Q"
+  assumes "\<And>x. Q x \<Longrightarrow> Q' x"
+  shows "wp x Q'"
+  using assms
+  by (simp split: result.splits)
+
+lemma wp_ok[wp_rules, simp]:
+  assumes "Q x"
+  shows "wp (ok x) Q"
+  using assms
+  by simp
+
+lemma wp_return:
+  assumes "Q x"
+  shows "wp (return x) Q"
+  using assms
+  by (simp add: return_def)
+
+lemma wp_assert[wp_rules]:
+  assumes "b \<Longrightarrow> wp f P"
+  assumes "\<not>b \<Longrightarrow> False"
+  shows "wp (do {assert e b; f}) P"
+  using assms
+  by (auto split: result.splits simp: bind_def) 
+thm wp_assert
+
+lemma wp_bind[wp_rules]:
+  assumes "wp m (\<lambda>x. wp (f x) P)"
+  shows "wp (do {x\<leftarrow>m; f x}) P"
+  using assms
+  by (cases m; simp add: bind_def)
+
+lemma wp_case_option[wp_rules]:
+  assumes "(c = None \<and> wp f P) \<or> (\<exists>v. c = Some v \<and> wp (g v) P)"
+  shows "wp (case c of None \<Rightarrow> f | (Some v) \<Rightarrow> g v) P"
+  using assms
+  by auto
+
+lemma wp_case_result[wp_rules]:
+  assumes "(\<exists>e. c = err e \<and> wp (f e) P) \<or> (\<exists>v. c = ok v \<and> wp (g v) P)"
+  shows "wp (case c of err e \<Rightarrow> f e | ok v \<Rightarrow> g v) P"
+  using assms
+  by auto
+
+lemma wp_if[wp_rules]:
+  assumes "b \<Longrightarrow> wp i Q"
+  assumes "\<not>b \<Longrightarrow> wp e Q"
+  shows "wp (if b then i else e) Q"
+  using assms
+  by auto
+
+lemma wp_case_product[wp_rules]:
+  assumes "\<And>b c. a = (b,c) \<Longrightarrow> wp (f b c) Q"
+  shows "wp (case a of (b,c) \<Rightarrow> f b c) Q"
+  using assms
+  by (cases a; simp)
+
+lemma wp_result:
+  assumes "f = ok x" "Q x"
+  shows "wp f Q"
+  using assms
+  by (cases f; simp)
+
+end
+
+
+named_theorems register_intro
+
+lemma wp_set_single_register_lid_intro[THEN consequence, register_intro]:
+  "wp (return (set_single_register n v lr,gr,sm,hm,gm)) (\<lambda>s'. register_\<alpha> s' = (register_\<alpha> (lr,gr,sm,hm,gm))(reg (lid n) := Some v) \<and> memory_\<alpha> s' = memory_\<alpha> (lr,gr,sm,hm,gm))"
+  unfolding set_single_register_def
+  by (intro wp_rules wp_return; simp)
+                                          
+lemma wp_set_register_intro[THEN consequence, wp_rules]:
+  assumes "is_lid n"
+  shows "wp (set_register n v s) (\<lambda>s'. register_\<alpha> s' = (register_\<alpha> s)(reg n := Some v) \<and> memory_\<alpha> s' = memory_\<alpha> s)"
+  using assms
+  by (cases n; cases s; simp; intro wp_rules register_intro; simp add: set_single_register_def)
+
+lemma wp_get_register_intro[THEN consequence, rearranged (1,0), wp_rules]:
+  assumes "register_\<alpha> s n \<noteq> None"
+  shows "wp (get_register s n) (\<lambda>v'. register_\<alpha> s n = Some v')"
+  using assms
+  apply (cases s; cases n) subgoal for _ _ _ _ _ id by (cases id; simp; intro wp_rules; auto split: option.splits)
+  by simp
+
+
 
 lemma register_\<alpha>_eq[simp]: "register_\<alpha> (lr,gr,sm,hm,gm) = register_\<alpha> (lr,gr,sm',hm',gm')"
   apply (rule ext)
@@ -221,7 +356,7 @@ lemma free_memory_\<alpha>:
 
 section "Intro rules"
 
-lemma wp_case_memory_value_intro[wp_intro]:
+lemma wp_case_memory_value_intro[wp_rules]:
   assumes "x = mem_unset \<Longrightarrow> wp f Q"
   assumes "\<And>v. x = mem_val v \<Longrightarrow> wp (g v) Q"
   assumes "x = mem_freed \<Longrightarrow> wp h Q"
@@ -235,9 +370,9 @@ lemma wp_get_single_memory_intro[THEN consequence, rotated -1, single_memory_int
   shows "wp (get_single_memory s a) (\<lambda>x. single_memory_\<alpha> s a = Some (mem_val x))"
   using assms
   unfolding get_single_memory_def valid_single_memory_address_def single_memory_\<alpha>_def
-  by (intro wp_intro; simp)
+  by (intro wp_rules; simp)
 
-lemma wp_get_memory_intro[THEN consequence, rotated -1, wp_intro]:
+lemma wp_get_memory_intro[THEN consequence, rotated -1, wp_rules]:
   assumes "valid_memory_address s a" "memory_\<alpha> s a \<noteq> Some mem_unset"
   shows "wp (get_memory s a) (\<lambda>x. memory_\<alpha> s a = Some (mem_val x))"
   using assms
@@ -249,14 +384,14 @@ lemma wp_set_single_memory_intro[THEN consequence, rotated -1, single_memory_int
   shows "wp (set_single_memory a v s) (\<lambda>s'. single_memory_\<alpha> s' = (single_memory_\<alpha> s)(a := Some (mem_val v)))"
   using assms
   unfolding set_single_memory_def
-  by (intro wp_intro wp_return_intro; simp add: single_memory_\<alpha>_def valid_single_memory_address_def allocated_single_memory_address_def fun_eq_iff split: if_splits)
+  by (intro wp_rules wp_return; simp add: single_memory_\<alpha>_def valid_single_memory_address_def allocated_single_memory_address_def fun_eq_iff split: if_splits)
 
 
-lemma wp_set_memory_intro[THEN consequence, rotated -1, wp_intro]:
+lemma wp_set_memory_intro[THEN consequence, rotated -1, wp_rules]:
   assumes "valid_memory_address s a"
   shows "wp (set_memory a v s) (\<lambda>s'. memory_\<alpha> s' = (memory_\<alpha> s)(a := Some (mem_val v)) \<and> register_\<alpha> s = register_\<alpha> s')"
-  using assms 
-  by (cases a; cases s; simp add: set_single_memory_def; intro wp_intro wp_return_intro; simp add: single_memory_\<alpha>_def valid_single_memory_address_def allocated_single_memory_address_def fun_eq_iff split: if_splits; metis register_\<alpha>_eq)
+  using assms
+  by (cases a; cases s; simp add: set_single_memory_def; intro wp_rules wp_return; simp; simp add: single_memory_\<alpha>_def valid_single_memory_address_def allocated_single_memory_address_def fun_eq_iff split: if_splits)
 
 
 lemma wp_free_single_memory_intro[THEN consequence, rotated -1, single_memory_intro]:
@@ -264,15 +399,15 @@ lemma wp_free_single_memory_intro[THEN consequence, rotated -1, single_memory_in
   shows "wp (free_single_memory a s) (\<lambda>s'. (single_memory_\<alpha> s') = (single_memory_\<alpha> s)(a := Some mem_freed))"
   using assms
   unfolding free_single_memory_def
-  apply (intro wp_intro wp_return_intro)
+  apply (intro wp_rules wp_return)
   by (auto simp: single_memory_\<alpha>_free valid_single_memory_address_def)
 
-lemma wp_free_memory_intro[THEN consequence, rotated -1, wp_intro]:
+lemma wp_free_memory_intro[THEN consequence, rotated -1, wp_rules]:
   assumes "valid_memory_address s (haddr a)"
   shows "wp (free_memory (haddr a) s) (\<lambda>s'. memory_\<alpha> s' = (memory_\<alpha> s)((haddr a) := Some mem_freed) \<and> register_\<alpha> s = register_\<alpha> s')"
   apply (cases s; simp)
   using assms
-   apply (intro wp_intro single_memory_intro wp_return_intro, auto) defer
+   apply (intro wp_rules single_memory_intro wp_return, auto) defer
   using assms valid_memory_address.simps apply blast
    apply (rule ext)
   subgoal for _ _ _ _ _ _ _ a' by (cases a'; simp)
@@ -282,97 +417,145 @@ lemma wp_free_memory_intro[THEN consequence, rotated -1, wp_intro]:
 lemma wp_allocate_single_memory[THEN consequence, rotated -1, single_memory_intro]:
   "wp (return (allocate_single_memory s)) (\<lambda>(s', a). (single_memory_\<alpha> s') = (single_memory_\<alpha> s)(a := Some mem_unset) \<and> single_memory_\<alpha> s a = None)"
   unfolding allocate_single_memory_def
-  apply (intro wp_intro wp_return_intro; auto simp: single_memory_simps)
+  apply (intro wp_rules wp_return; auto simp: single_memory_simps)
   by (simp add: single_memory_\<alpha>_def valid_single_memory_address_def allocated_single_memory_address_def)
 
 
-lemma wp_allocate_stack_intro[THEN consequence, rotated -1, wp_intro]:
+lemma wp_allocate_stack_intro[THEN consequence, rotated -1, wp_rules]:
   "wp (return (allocate_stack s)) (\<lambda>(s', a). (\<exists>a'. a = saddr a') \<and> (memory_\<alpha> s') = (memory_\<alpha> s)(a := Some mem_unset) \<and> memory_\<alpha> s a = None \<and> register_\<alpha> s = register_\<alpha> s')"
   unfolding allocate_stack_def allocate_single_memory_def
-  apply (cases s; intro wp_intro wp_return_intro; auto)
+  apply (cases s; intro wp_rules wp_return; auto)
   by (simp add: single_memory_\<alpha>_def valid_single_memory_address_def allocated_single_memory_address_def)
 
-lemma wp_allocate_heap_intro[THEN consequence, rotated -1, wp_intro]:
+lemma wp_allocate_heap_intro[THEN consequence, rotated -1, wp_rules]:
   "wp (return (allocate_heap s)) (\<lambda>(s', a). (\<exists>a'. a = haddr a') \<and> (memory_\<alpha> s') = (memory_\<alpha> s)(a := Some mem_unset) \<and> memory_\<alpha> s a = None \<and> register_\<alpha> s = register_\<alpha> s')"
   unfolding allocate_heap_def allocate_single_memory_def
-  apply (cases s; intro wp_intro wp_return_intro; auto)
+  apply (cases s; intro wp_rules wp_return; auto)
   by (simp add: single_memory_\<alpha>_def valid_single_memory_address_def allocated_single_memory_address_def)
 
-lemma wp_allocate_global_intro[THEN consequence, rotated -1, wp_intro]:
+lemma wp_allocate_global_intro[THEN consequence, rotated -1, wp_rules]:
   "wp (return (allocate_global s)) (\<lambda>(s', a). (\<exists>a'. a = gaddr a') \<and> (memory_\<alpha> s') = (memory_\<alpha> s)(a := Some mem_unset) \<and> memory_\<alpha> s a = None \<and> register_\<alpha> s = register_\<alpha> s')"
   unfolding allocate_global_def allocate_single_memory_def
-  apply (cases s; intro wp_intro wp_return_intro; auto)
+  apply (cases s; intro wp_rules wp_return; auto)
   by (simp add: single_memory_\<alpha>_def valid_single_memory_address_def allocated_single_memory_address_def)
 
 
+lemma wp_assign_params_intro:
+  assumes "register_\<alpha> s v = Some va" 
+  assumes "\<And>s''. register_\<alpha> s'' = (register_\<alpha> s')(reg n := Some va) \<Longrightarrow> memory_\<alpha> s'' = memory_\<alpha> s' \<Longrightarrow> wp (assign_params ps vs s s'') Q"
+  assumes "is_lid n"
+  shows "wp (assign_params ((n,t)#ps) ((t',v)#vs) s s') Q"
+  apply simp apply (intro wp_rules) using assms by auto
 
-section "Stack Frames"
+lemma wp_assign_params_empty_intro:
+  assumes "Q s'"
+  shows "wp (assign_params [] [] s s') Q"
+  using assms by simp
 
-definition "mem_op_well_behaved f \<equiv> \<forall>s a. ((memory_\<alpha> s a \<noteq> None \<longrightarrow> memory_\<alpha> (f s) a \<noteq> None) \<and> (memory_\<alpha> s a = Some mem_freed \<longrightarrow> memory_\<alpha> (f s) a = Some mem_freed))"
-
-lemma well_behaved_imp_stack_grows:
-  assumes "mem_op_well_behaved f" "(lr',gr',sm',hm',gm') = f (lr,gr,sm,hm,gm)"
-  shows "length sm' \<ge> length sm"
-  unfolding mem_op_well_behaved_def
-proof -
-  have "\<And>lr gr sm hm gm a. memory_\<alpha> (lr,gr,sm,hm,gm) (saddr a) \<noteq> None \<Longrightarrow> a < length sm"
-    apply simp
-    unfolding single_memory_\<alpha>_def allocated_single_memory_address_def
-    by (auto split: if_splits)        
-
-  moreover
-
-  have "\<And>a. memory_\<alpha> (lr,gr,sm,hm,gm) a \<noteq> None \<Longrightarrow> memory_\<alpha> (lr',gr',sm',hm',gm') a \<noteq> None"
-    using assms mem_op_well_behaved_def
-    by simp
-
-  ultimately
-  
-  show ?thesis
-    by (metis allocated_single_memory_address_def memory_\<alpha>.simps(1) nat_le_linear nat_less_le
-        single_memory_\<alpha>_not_none_iff)
-qed
+lemma wp_restore_state_intro:
+  assumes "\<And>n. rn = Some n \<Longrightarrow> rv = Some v"
+  assumes "\<And>n. rn = Some n \<Longrightarrow> wp (set_register n v (pop_frame s s')) Q"
+  assumes "rn = None   \<Longrightarrow> Q (pop_frame s s')"
+  shows "wp (restore_state s s' rv rn) Q"
+  using assms
+  unfolding wp_def
+  by (cases rn; cases rv; simp)
 
 
-lemma "s' = push_frame s \<Longrightarrow> s'' = f s' \<Longrightarrow> mem_op_well_behaved f \<Longrightarrow> s''' = pop_frame s s'' \<Longrightarrow> \<forall>a. memory_\<alpha> s''' (haddr a) = memory_\<alpha> s'' (haddr a)"
-  by (cases s; cases s'; cases s''; cases s'''; fastforce)
-lemma "s' = push_frame s \<Longrightarrow> s'' = f s' \<Longrightarrow> mem_op_well_behaved f \<Longrightarrow> s''' = pop_frame s s'' \<Longrightarrow> \<forall>a. memory_\<alpha> s''' (gaddr a) = memory_\<alpha> s'' (gaddr a)"
-  by (cases s; cases s'; cases s''; cases s'''; fastforce)
+section "Step Predicates"
 
-lemma "s' = push_frame s \<Longrightarrow> s'' = f s' \<Longrightarrow> mem_op_well_behaved f \<Longrightarrow> s''' = pop_frame s s'' \<Longrightarrow> \<forall>a. memory_\<alpha> s (saddr a) \<noteq> None \<longleftrightarrow> memory_\<alpha> s''' (saddr a) \<noteq> None"
-  apply (cases s; cases s'; cases s''; cases s''')
-  subgoal premises prems for lr gr sm hm gm lr' gr' sm' hm' gm' lr'' gr'' sm'' hm'' gm'' lr''' gr''' sm''' hm''' gm'''
-  proof -
-    obtain n n' n'' n''' where "n = length sm" "n' = length sm'" "n'' = length sm''" "n''' = length sm'''"
-      by blast
+lemma unfold_wp_f:
+  assumes "map_of program f = Some fu"
+  assumes "map_of (llvm_function.blocks fu) lab = Some b"
+  assumes "wp_is
+            (execi prev b s)
+            (\<lambda>si'.
+              (case si' of
+                flowi s' br \<Rightarrow>
+                  (case br of
+                    branch_label l \<Rightarrow> Q (branchf s' (Some lab) l f)
+                  | return_value v \<Rightarrow> Q (retf s' v f)
+                  )
+              | _ \<Rightarrow> False
+              )
+            )"
+  shows "wp_f (branchf s prev lab f) Q"
+  unfolding wp_f_def
+  apply (intro allI impI)
+  apply (cases rule: step_f.cases)
+  using assms
+  unfolding wp_is_def
+  by auto
 
-    have "n''' = length (take n sm'')"
-      using \<open>n = length sm\<close> \<open>n''' = length sm'''\<close> prems(4,5,7,8)
-      by fastforce
-
-    have "n' = n"
-      using \<open>n = length sm\<close> \<open>n' = length sm'\<close> prems(1,5,6)
-      by auto
-
-    have "n'' \<ge> n"
-      using \<open>n' = length sm'\<close> \<open>n' = n\<close> \<open>n'' = length sm''\<close> prems(2,3,6,7) well_behaved_imp_stack_grows
-      by auto
-
-    have "n = n'''" 
-      using \<open>n \<le> n''\<close> \<open>n'' = length sm''\<close> \<open>n''' = length (take n sm'')\<close>
-      by force
-
-    show ?thesis using \<open>n = n'''\<close> \<open>n = length sm\<close> \<open>n''' = length sm'''\<close>
-      by (simp add: single_memory_\<alpha>_def allocated_single_memory_address_def prems(5,8))
-  qed
+lemma unfold_wp_is:
+  assumes "s \<nexists>\<rightarrow>\<^sub>i \<Longrightarrow> \<not>is_erri s \<and> Q s"
+  assumes "\<not>s \<nexists>\<rightarrow>\<^sub>i \<Longrightarrow> wp_i s (\<lambda>s'. wp_is s' Q)"
+  shows "wp_is s Q"
+  unfolding wp_is_def
+  apply (intro allI impI, elim conjE)
+  subgoal for s'
+    using assms apply (rotate_tac 0)
+    apply (induction rule: converse_rtranclp_induct) apply blast
+    unfolding wp_i_def
+    by (smt (verit) step_i.simps terminal_state_simps(3) wp_is_def)
   done
 
-lemma "s' = push_frame s \<Longrightarrow> s'' = f s' \<Longrightarrow> mem_op_well_behaved f \<Longrightarrow> s''' = pop_frame s s'' \<Longrightarrow> \<forall>n. register_\<alpha> s''' (reg (lid n)) = register_\<alpha> s (reg (lid n))"
-  by (cases s; cases s''; fastforce)
 
-lemma "s' = push_frame s \<Longrightarrow> s'' = f s' \<Longrightarrow> mem_op_well_behaved f \<Longrightarrow> s''' = pop_frame s s'' \<Longrightarrow> \<forall>n. register_\<alpha> s''' (reg (gid n)) = register_\<alpha> s'' (reg (gid n))"
-  by (cases s; cases s''; fastforce)
+named_theorems unfold_wp_i
 
+lemma wp_step_i_br_label_intro[unfold_wp_i]:
+  assumes "Q (flowi s (branch_label l))"
+  shows "wp_i (execi pre ([],[],br_label l) s) Q"
+  using assms
+  unfolding wp_i_def
+  apply (intro allI impI)
+  using step_i.simps[of program]
+  by simp
+ 
+
+lemma wp_step_i_br_i1_intro[unfold_wp_i]:
+  assumes "register_\<alpha> s b = Some (vi1 bool)"
+  assumes "bool \<Longrightarrow> Q (flowi s (branch_label l1))"
+  assumes "\<not>bool \<Longrightarrow> Q (flowi s (branch_label l2))"
+  shows "wp_i (execi pre ([],[],br_i1 b l1 l2) s) Q"
+  using assms
+  unfolding wp_i_def
+  apply (intro allI impI)
+  using step_i.simps[of program] register_\<alpha>_eq_get_register
+  by (cases bool; fastforce) \<comment> \<open> Takes a bit... \<close>
+
+lemma wp_step_i_ret_None_intro[unfold_wp_i]:
+  assumes "Q (flowi s (return_value None))"
+  shows "wp_i (execi pre ([],[],ret None) s) Q"
+  using assms
+  unfolding wp_i_def
+  apply (intro allI impI)
+  using step_i.simps[of program]
+  by simp
+
+lemma wp_step_i_ret_value_intro[unfold_wp_i]:
+  assumes "register_\<alpha> s v = Some v'"
+  assumes "Q (flowi s (return_value (Some v')))"
+  shows "wp_i (execi pre ([],[],ret (Some (t,v))) s) Q"
+  using assms
+  unfolding wp_i_def
+  apply (intro allI impI)
+  using step_i.simps[of program] register_\<alpha>_eq_get_register
+  by simp
+
+lemma wp_step_i_phi_intro[unfold_wp_i]:
+  assumes "wp (execute_phi pre p s) (\<lambda>s'. Q (execi pre (ps,is,ter) s'))"
+  shows "wp_i (execi pre (p#ps,is,ter) s) Q"
+proof -
+  obtain s' where "execute_phi pre p s = ok s'"
+    using assms unfolding wp_def by (auto split: result.splits)
+  then have "Q (execi pre (ps,is,ter) s')" using assms unfolding wp_def by simp
+  then show ?thesis
+    unfolding wp_i_def using step_i.simps[of program] \<open>execute_phi pre p s = ok s'\<close>
+    by force
+qed
+
+end
 
 
 end

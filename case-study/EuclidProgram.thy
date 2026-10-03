@@ -1,5 +1,5 @@
 theory EuclidProgram
-  imports "VCG" "HOL.GCD"
+  imports "../IsabeLLeVM" "HOL.GCD"
 begin
 
 
@@ -259,10 +259,10 @@ abbreviation gcd_annots :: "precondition * block_preconditions * postcondition" 
 definition "euclid_annots \<equiv> [(gid ''sub'', sub_annots), (gid ''rem'', rem_annots), (gid ''gcd'', gcd_annots)]"
 
 
-lemma "verify_program euclid_prog euclid_annots"
-  apply vcg_verify_program
+lemma "correctness_notion euclid_prog euclid_annots"
+  apply vcg_program
   subgoal (* sub function *)
-    apply (vcg_verify_function annot: euclid_annots_def) 
+    apply (vcg_function annot: euclid_annots_def)
     apply (all \<open>((simp add: word_sle_eq word_sless_eq; force); fail)?\<close>)
     subgoal
       by (simp add: word_sle_eq word_sless_eq, smt (verit, del_insts) More_Word.sint_0 diff_zero minus_diff_eq signed_arith_ineq_checks_to_eq_word32(1,2) signed_minus_1)
@@ -271,12 +271,12 @@ lemma "verify_program euclid_prog euclid_annots"
     done
 
   subgoal (* rem function *)
-    apply (vcg_verify_function annot: euclid_annots_def) 
+    apply (vcg_function annot: euclid_annots_def) 
     apply (all \<open>((simp add: word_sle_eq word_sless_eq; force  ); fail)?\<close>)
     subgoal
       apply (simp add: word_sle_eq word_sless_eq)
       by (metis mod_pos_pos_trivial order_le_imp_less_or_eq word_sint.Rep_inverse)
-    subgoal premises prems for s a b s'
+    subgoal premises prems for s a b r s'
     proof -
       have bleqa: "b \<le>s a" using prems 
         apply (simp add: word_sle_eq word_sless_eq)
@@ -297,7 +297,7 @@ lemma "verify_program euclid_prog euclid_annots"
     done
 
   subgoal (* gcd function *)
-    apply (vcg_verify_function annot: euclid_annots_def) 
+    apply (vcg_function annot: euclid_annots_def) 
     apply (all \<open>((simp add: word_sle_eq word_sless_eq; force); fail)?\<close>)
     subgoal
         apply (simp add: word_sle_eq word_sless_eq)

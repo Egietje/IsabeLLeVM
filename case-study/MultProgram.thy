@@ -1,5 +1,5 @@
 theory MultProgram
-  imports "HOL-Library.AList_Mapping" "VCG"
+  imports "../IsabeLLeVM"
 begin
 
 
@@ -199,12 +199,10 @@ definition mult_annotations :: annotations where
     ]"
 
 
-lemma mult_floyd:
-  "verify_program
-    mult_program
-    mult_annotations"
-  apply (vcg_verify_program prog: mult_program_def)
-  apply (vcg_verify_function blocks: mult_entry_def mult_cond_def mult_body_def mult_inc_def mult_end_def annot: mult_annotations_def prog: mult_program_def func: mult_function_def)
+lemma mult_correct:
+  "correctness_notion mult_program mult_annotations"
+  apply (vcg_program prog: mult_program_def)
+  apply (vcg_function blocks: mult_entry_def mult_cond_def mult_body_def mult_inc_def mult_end_def annot: mult_annotations_def prog: mult_program_def func: mult_function_def)
 
   apply (all \<open>((simp add: mult_program_def, force); fail)?\<close>)
   including word_bundle
